@@ -1,27 +1,58 @@
 #import "CPAppDelegate.h"
 #import "CPCLIToolInstallationController.h"
 #import "CPHomeWindowController.h"
-
-NSString * const kCPCLIToolSuggestedDestination = @"/usr/local/bin/pod";
+#import "CPReflectionServiceProtocol.h"
+#import "CocoaPods-Swift.h"
+#import "CPCLIToolInstallationController.h"
+#import <Quartz/Quartz.h>
+#import <LetsMove/PFMoveApplication.h>
 
 @interface CPAppDelegate ()
-@property (strong) CPHomeWindowController *homeWindowController;
+@property (nonatomic, strong) CPHomeWindowController *homeWindowController;
+@property (strong) NSXPCConnection *reflectionService;
+@property (strong) URLHandler *urlHandler;
 @end
 
 @implementation CPAppDelegate
 
 #pragma mark - NSApplicationDelegate
 
+- (void)applicationWillFinishLaunching:(NSNotification *)notification;
+{
+  PFMoveToApplicationsFolderIfNecessary();
+  [self startURLService];
+  [self checkForBirthday];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)notification;
 {
 #ifdef DEBUG
-  //[[NSUserDefaults standardUserDefaults] removeObjectForKey:kCPRequestCLIToolInstallationAgainKey];
-  //[[NSUserDefaults standardUserDefaults] removeObjectForKey:kCPCLIToolInstalledToDestinationsKey];
-  //[[NSUserDefaults standardUserDefaults] removeObjectForKey:@"CPShowVerboseCommandOutput"];
-  //NSLog(@"%@", [[NSUserDefaults standardUserDefaults] dictionaryRepresentation]);
+//  NSLog(@"Ensuring you see the install CLI-tools banner");
+//  [[NSUserDefaults standardUserDefaults] removeObjectForKey:kCPDoNotRequestCLIToolInstallationAgainKey];
+//  [[NSUserDefaults standardUserDefaults] removeObjectForKey:kCPCLIToolInstalledToDestinationsKey];
 #endif
 
-  [[self CLIToolInstallationController] installBinstubIfNecessary];
+  [self startReflectionService];
+}
+
+- (void)startReflectionService;
+{
+  self.reflectionService = [[NSXPCConnection alloc] initWithServiceName:@"org.cocoapods.ReflectionService"];
+  self.reflectionService.remoteObjectInterface = [NSXPCInterface interfaceWithProtocol:@protocol(CPReflectionServiceProtocol)];
+  self.reflectionService.invalidationHandler = ^{ NSLog(@"ReflectionService invalidated."); };
+  self.reflectionService.interruptionHandler = ^{ NSLog(@"ReflectionService interrupted."); };
+  [self.reflectionService resume];
+}
+
+- (void)startURLService;
+{
+  self.urlHandler = [URLHandler new];
+  [self.urlHandler registerHandler];
+}
+
+- (BOOL)applicationShouldOpenUntitledFile:(NSApplication *)sender
+{
+  return NO;
 }
 
 - (void)applicationWillBecomeActive:(NSNotification *)notification
@@ -34,7 +65,6 @@ NSString * const kCPCLIToolSuggestedDestination = @"/usr/local/bin/pod";
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender;
 {
-  [self showHomeWindow:sender];
   return NO;
 }
 
@@ -52,25 +82,57 @@ NSString * const kCPCLIToolSuggestedDestination = @"/usr/local/bin/pod";
 
 - (IBAction)installBinstubIfNecessary:(id)sender;
 {
-  [[self CLIToolInstallationController] installBinstub];
+    [self.homeWindowController installBinstub:sender];
 }
 
 - (IBAction)showHomeWindow:(id)sender;
 {
   if (self.homeWindowController == nil) {
     self.homeWindowController = [[CPHomeWindowController alloc] init];
+    [self.homeWindowController.window center];
   }
 
   [self.homeWindowController showWindow:sender];
-  [self.homeWindowController.window center];
 }
 
 #pragma mark - Private
 
-- (CPCLIToolInstallationController *)CLIToolInstallationController;
+- (CPHomeWindowController *)homeWindowController
 {
-  NSURL *destinationURL = [NSURL fileURLWithPath:kCPCLIToolSuggestedDestination];
-  return [CPCLIToolInstallationController controllerWithSuggestedDestinationURL:destinationURL];
+  if (_homeWindowController == nil) {
+    _homeWindowController = [[CPHomeWindowController alloc] init];
+  }
+  return _homeWindowController;
+}
+
+#pragma mark - Easter Eggs
+
+- (void)checkForBirthday
+{
+  NSDateComponents *components = [[NSCalendar currentCalendar] components:NSCalendarUnitMonth | NSCalendarUnitDay fromDate:[NSDate date]];
+  if (components.month == 8 && components.day == 13) {
+    NSApplication *app = [NSApplication sharedApplication];
+    NSImage *appIcon = [app applicationIconImage];
+    [app setApplicationIconImage:[self editionColoredImage:appIcon]];
+  }
+}
+
+- (NSImage *)editionColoredImage:(NSImage *)image
+{
+  CIImage *inputImage = [[CIImage alloc] initWithData:image.TIFFRepresentation];
+
+  CIFilter *hueAdjust = [CIFilter filterWithName:@"CIHueAdjust"];
+  [hueAdjust setValue: inputImage forKey: @"inputImage"];
+
+  NSNumber *colorValue = @(365.375);
+  [hueAdjust setValue:colorValue forKey: @"inputAngle"];
+
+  CIImage *outputImage = hueAdjust.outputImage;
+  NSImage *resultImage = [[NSImage alloc] initWithSize:outputImage.extent.size];
+  NSCIImageRep *rep = [NSCIImageRep imageRepWithCIImage:outputImage];
+  [resultImage addRepresentation:rep];
+
+  return resultImage;
 }
 
 @end
